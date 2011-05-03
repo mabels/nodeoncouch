@@ -1,0 +1,6 @@
+#!/bin/sh
+#tee /tmp/in | \
+/Users/menabe/macosx/bin/node /Users/menabe/macosx/lib/couchdb/bin/couchnode.js $@ 
+#| \
+#tee /tmp/out
+#/Users/menabe/macosx/lib/couchdb/bin/couchjs.off $@ | \

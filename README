@@ -1,0 +1,9 @@
+this is the first steps to build a replacment for spidermonkey in couch
+i uses now node for map reduce
+
+find the couchjs script and paste in mine one and tweak the paths
+than it should work basicly
+
+there will be a better way to deploy but this is done in 10minutes
+
+Meno
