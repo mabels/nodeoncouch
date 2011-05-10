@@ -1,6 +1,206 @@
-#!/bin/sh
-#tee /tmp/in | \
-/Users/menabe/macosx/bin/node /Users/menabe/macosx/lib/couchdb/bin/couchnode.js $@ 
-#| \
-#tee /tmp/out
-#/Users/menabe/macosx/lib/couchdb/bin/couchjs.off $@ | \
+#!/usr/bin/env node
+
+/*
+    Tend to be ugly!!!
+ */
+var fs   = require('fs');
+var util = require('util');
+var vm   = require('vm');
+
+process.stdin.resume();
+process.stdin.setEncoding('utf-8');
+
+var readline = function(stream, fn) {
+	var queue = [];
+	stream.on('data', function(chunk) {
+		var str = chunk.toString('utf-8');
+		var nl_idx = str.indexOf("\n");
+		if (nl_idx >= 0) {
+			queue.push(str.slice(0,nl_idx));	
+			fn(queue.join(''));			
+			queue = [str.slice(nl_idx+1, str.length)];
+		} else {
+			queue.push(str);	
+		}
+	});
+}
+
+/*
+IN:
+["reset",{"reduce_limit":true}]
+["add_fun","function(doc) {\n  emit(doc._id, doc);\n}"]
+["map_doc",{"_id":"aee2c21850f5d93c4721678c2222d188","_rev":"1-2f3b2ad036d77d47ce25270740aeaff2","keys":["d","c"]}]
+["reduce",["function() {\nreturn 4;\n}"],[[["aee2c21850f5d93c4721678c22197e1ex","aee2c21850f5d93c4721678c22197e1e"],null],[["aee2c21850f5d93c4721678c2219839cx","aee2c21850f5d93c4721678c2219839c"],null],[["aee2c21850f5d93c4721678c22199129x","aee2c21850f5d93c4721678c22199129"],null],[["aee2c21850f5d93c4721678c221cfcbfx","aee2c21850f5d93c4721678c221cfcbf"],null],[["aee2c21850f5d93c4721678c221d01ddx","aee2c21850f5d93c4721678c221d01dd"],null],[["aee2c21850f5d93c4721678c221d1067x","aee2c21850f5d93c4721678c221d1067"],null],[["aee2c21850f5d93c4721678c221d1c9fx","aee2c21850f5d93c4721678c221d1c9f"],null],[["aee2c21850f5d93c4721678c221d2ab6x","aee2c21850f5d93c4721678c221d2ab6"],null],[["aee2c21850f5d93c4721678c221d32e8x","aee2c21850f5d93c4721678c221d32e8"],null],[["aee2c21850f5d93c4721678c221d398ex","aee2c21850f5d93c4721678c221d398e"],null],[["aee2c21850f5d93c4721678c221d4129x","aee2c21850f5d93c4721678c221d4129"],null],[["aee2c21850f5d93c4721678c221d50d3x","aee2c21850f5d93c4721678c221d50d3"],null],[["aee2c21850f5d93c4721678c221d587dx","aee2c21850f5d93c4721678c221d587d"],null],[["aee2c21850f5d93c4721678c221d5ec1x","aee2c21850f5d93c4721678c221d5ec1"],null],[["aee2c21850f5d93c4721678c221d6575x","aee2c21850f5d93c4721678c221d6575"],null]]]
+
+OUT:
+true
+true
+[[["aee2c21850f5d93c4721678c2222d188a",{"_id":"aee2c21850f5d93c4721678c2222d188","_rev":"1-2f3b2ad036d77d47ce25270740aeaff2","keys":["d","c"]}],["aee2c21850f5d93c4721678c2222d188b",{"_id":"aee2c21850f5d93c4721678c2222d188","_rev":"1-2f3b2ad036d77d47ce25270740aeaff2","keys":["d","c"]}],["aee2c21850f5d93c4721678c2222d188c",{"_id":"aee2c21850f5d93c4721678c2222d188","_rev":"1-2f3b2ad036d77d47ce25270740aeaff2","keys":["d","c"]}]]]
+*/
+
+var CouchAPI = function() {
+	this.sender = [];
+	this.rows = [];
+}
+CouchAPI.prototype = {
+		log: function(str) { console.error(str); },
+		sum: function(arr) { this.log(util.inspect(arguments)); var ret=0; for(var i in arr) { ret += arr[i] }; return ret; },
+		resetSend: function() { this.sender = [88]; },
+		getSend: function() { console.error("getSend:"+util.inspect(this)); return this.sender; },
+		send: function(obj) { this.sender.push(obj); console.error("SEND:"+util.inspect(this)); },
+		getRow: function()  { return this.rows.shift(); }
+};
+
+var reader = (function() {
+	var map_fn = {
+									doIts: [],
+									emit: function(key, val) { out_data.push([key, val]); }
+							 };
+	var reduce_fn = null;
+	var reduce_fns = {};
+	var out_data = [];
+	var ddocs = {};
+	var emit = function(key, val) { out_data.push([key, val]); }
+	return function(line) {
+		var op = JSON.parse(line);
+		var factory = {
+			reset:   function(opts) { 
+				map_fn.doIts = [];
+				return true; 
+			},		
+			add_fun: function(fn) { 
+				vm.runInNewContext("doIts.push("+fn+");", map_fn);
+console.error("ADD_FUN="+fn);
+				return true; 
+			},		
+			ddoc: function() {
+				var opts = Array.prototype.slice.call(arguments);
+				var key = opts.shift();
+				if (key == 'new') {
+					key = opts.shift();
+					ddocs[key] = opts.shift();
+					return true;
+				} else  {
+					var base = ddocs[key];
+					var path = opts.shift();
+					for(var i in path) {
+						base = base[path[i]];
+					}
+					if (typeof(base) != 'function') {
+						try {
+							var fn_str = base;
+							base = new CouchAPI();
+							vm.runInNewContext("doIt = "+fn_str, base);
+						} catch(e) {
+//console.error("ERROR="+util.inspect(base)+":"+e);
+							base = { doIt: function() { return e; } };
+						}
+					} 
+					var style = path[0];
+					try {
+					  var styler = {
+							"shows": function(args) {
+								var resp = base.doIt.apply(base,args);
+								resp = (typeof(resp) == 'object' && resp) || {body: resp};
+								return ["resp", resp];
+							},
+							"lists": function(args) {
+								base.resetSend();
+console.error("LISTS:"+util.inspect(base));								
+								base.doIt.apply(base, args);
+								return base.getSend();
+							},
+							"updates": function(args) {
+								var resp = base.doIt.apply(base,args);
+								var doc = resp.shift();
+								var resp = resp.shift();
+								resp = (typeof(resp) == 'object' && resp) || {body: resp};
+								return ["up", doc, resp ];
+							},
+							"filters": function(args) {
+								var ret = [];
+								var docs = args.shift();
+								var req = args.shift();
+								for(var i in docs) {
+									ret.push(!!base.doIt(docs[i], req));
+								}
+								return [true, ret];
+							},
+							"validate_doc_update": function(args) {
+							 	var ret = base.doIt.apply(base, args);
+						 		return (typeof(ret) == 'undefined' && 1) || ret;
+							}
+						};
+						return styler[style].apply(styler, opts);
+					} catch(e) {
+console.error('-ddoc-EXCEPTION:'+util.inspect(e));
+						 return e;
+					}
+				}
+			},
+/*
+-ddoc-{ 
+'0': 'foo',
+'1': [ 'shows', 'simple' ],
+'2': [ { title: 'Best ever', body: 'Doc body' }, {} ] }
+*/
+			rereduce: function(func_str, data) {
+				return this.reduce(func_str, data);
+			},
+			list_row: function() {
+console.error('-list_row-');				
+				return null;
+			},
+			list_end: function() {
+console.error('-list_end-');				
+				return null;
+			},
+			reduce:  function(fns, data) { 
+				reduce_fn = new CouchAPI();
+				var keys = [];
+				var values = [];
+				if (data.length > 0 && data[0].shift) {
+					for(var j = 0, l = data.length; j < l; ++j) {
+						var d = data[j];
+						keys.push(d[0]);
+						values.push(d[1]);
+					}
+				} else {
+					for(var j = 0, l = data.length; j < l; ++j) {
+						var d = data[j];
+						values.push(d);
+					}
+				}
+				var func = reduce_fns[fns[0]];
+				if (!func) {
+console.error('REDUCE:'+fns[0]);
+				  vm.runInNewContext("doIt = "+fns[0], reduce_fn);
+					func = reduce_fns[func] = reduce_fn;
+				}
+console.error('-reduce-'+util.inspect(arguments));				
+				return [true, [func.doIt(keys, values)]];
+			},
+			map_doc: function(data) { 
+				try {
+					var ret = [];
+					for(var i in map_fn.doIts) {
+						out_data = [];
+						map_fn.doIts[i](data);
+						ret.push(out_data);
+					}
+console.error('MAP_DOC:'+util.inspect(data)+"=>"+util.inspect(out_data))
+					return ret;
+				} catch(e) {
+					console.error('MAP_DOC:ERROR:'+e);
+					return [[[]]];
+				}
+			}
+		};
+		var out = factory[op.shift()].apply(factory, op);
+		if (out !== null) {
+			process.stdout.write(JSON.stringify(out)+"\n", 'utf-8');
+		}
+	}
+})();
+
+readline(process.stdin, reader);
