@@ -7,51 +7,29 @@ var fs   = require('fs');
 var util = require('util');
 var vm   = require('vm');
 
-process.stdin.resume();
-process.stdin.setEncoding('utf-8');
-
-var readline = function(stream, fn) {
-	var queue = [];
-	stream.on('data', function(chunk) {
-		var str = chunk.toString('utf-8');
-		var nl_idx = str.indexOf("\n");
-		if (nl_idx >= 0) {
-			queue.push(str.slice(0,nl_idx));	
-			fn(queue.join(''));			
-			queue = [str.slice(nl_idx+1, str.length)];
-		} else {
-			queue.push(str);	
-		}
-	});
-}
-
-/*
-IN:
-["reset",{"reduce_limit":true}]
-["add_fun","function(doc) {\n  emit(doc._id, doc);\n}"]
-["map_doc",{"_id":"aee2c21850f5d93c4721678c2222d188","_rev":"1-2f3b2ad036d77d47ce25270740aeaff2","keys":["d","c"]}]
-["reduce",["function() {\nreturn 4;\n}"],[[["aee2c21850f5d93c4721678c22197e1ex","aee2c21850f5d93c4721678c22197e1e"],null],[["aee2c21850f5d93c4721678c2219839cx","aee2c21850f5d93c4721678c2219839c"],null],[["aee2c21850f5d93c4721678c22199129x","aee2c21850f5d93c4721678c22199129"],null],[["aee2c21850f5d93c4721678c221cfcbfx","aee2c21850f5d93c4721678c221cfcbf"],null],[["aee2c21850f5d93c4721678c221d01ddx","aee2c21850f5d93c4721678c221d01dd"],null],[["aee2c21850f5d93c4721678c221d1067x","aee2c21850f5d93c4721678c221d1067"],null],[["aee2c21850f5d93c4721678c221d1c9fx","aee2c21850f5d93c4721678c221d1c9f"],null],[["aee2c21850f5d93c4721678c221d2ab6x","aee2c21850f5d93c4721678c221d2ab6"],null],[["aee2c21850f5d93c4721678c221d32e8x","aee2c21850f5d93c4721678c221d32e8"],null],[["aee2c21850f5d93c4721678c221d398ex","aee2c21850f5d93c4721678c221d398e"],null],[["aee2c21850f5d93c4721678c221d4129x","aee2c21850f5d93c4721678c221d4129"],null],[["aee2c21850f5d93c4721678c221d50d3x","aee2c21850f5d93c4721678c221d50d3"],null],[["aee2c21850f5d93c4721678c221d587dx","aee2c21850f5d93c4721678c221d587d"],null],[["aee2c21850f5d93c4721678c221d5ec1x","aee2c21850f5d93c4721678c221d5ec1"],null],[["aee2c21850f5d93c4721678c221d6575x","aee2c21850f5d93c4721678c221d6575"],null]]]
-
-OUT:
-true
-true
-[[["aee2c21850f5d93c4721678c2222d188a",{"_id":"aee2c21850f5d93c4721678c2222d188","_rev":"1-2f3b2ad036d77d47ce25270740aeaff2","keys":["d","c"]}],["aee2c21850f5d93c4721678c2222d188b",{"_id":"aee2c21850f5d93c4721678c2222d188","_rev":"1-2f3b2ad036d77d47ce25270740aeaff2","keys":["d","c"]}],["aee2c21850f5d93c4721678c2222d188c",{"_id":"aee2c21850f5d93c4721678c2222d188","_rev":"1-2f3b2ad036d77d47ce25270740aeaff2","keys":["d","c"]}]]]
-*/
-
-var CouchAPI = function() {
-	this.sender = [];
-	this.rows = [];
-}
-CouchAPI.prototype = {
-		log: function(str) { console.error(str); },
-		sum: function(arr) { this.log(util.inspect(arguments)); var ret=0; for(var i in arr) { ret += arr[i] }; return ret; },
-		resetSend: function() { this.sender = [88]; },
-		getSend: function() { console.error("getSend:"+util.inspect(this)); return this.sender; },
-		send: function(obj) { this.sender.push(obj); console.error("SEND:"+util.inspect(this)); },
-		getRow: function()  { return this.rows.shift(); }
-};
-
 var reader = (function() {
+	var SharedCouchAPI = null;
+	var InitSharedCouchAPI = function () {
+		this.sender = [];
+		this.start = { headers: {} };
+		this.stop = undefined;
+		this.events = {};
+		this.rows = [];
+	};
+
+	var CouchAPI = function() { }
+	CouchAPI.prototype = {
+			log: function(str) { return(["log", util.inspect(str)]); },
+			sum: function(arr) { this.log(util.inspect(arguments)); var ret=0; for(var i in arr) { ret += arr[i] }; return ret; },
+			start: function(obj) { SharedCouchAPI.start = obj },
+			stop: function(obj) { SharedCouchAPI.stop = true; SharedCouchAPI.sender.push(obj); },
+			send: function(obj) { SharedCouchAPI.sender.push(obj); },
+			on: function(name, fn)  { 
+				if (!SharedCouchAPI.events[name]) { SharedCouchAPI.events[name] = [] }
+				SharedCouchAPI.events[name].push(fn);
+			}
+	}
+
 	var map_fn = {
 									doIts: [],
 									emit: function(key, val) { out_data.push([key, val]); }
@@ -60,17 +38,16 @@ var reader = (function() {
 	var reduce_fns = {};
 	var out_data = [];
 	var ddocs = {};
-	var emit = function(key, val) { out_data.push([key, val]); }
 	return function(line) {
 		var op = JSON.parse(line);
 		var factory = {
-			reset:   function(opts) { 
+			reset: function(opts) { 
 				map_fn.doIts = [];
+				SharedCouchAPI = new InitSharedCouchAPI();
 				return true; 
 			},		
 			add_fun: function(fn) { 
 				vm.runInNewContext("doIts.push("+fn+");", map_fn);
-console.error("ADD_FUN="+fn);
 				return true; 
 			},		
 			ddoc: function() {
@@ -83,17 +60,14 @@ console.error("ADD_FUN="+fn);
 				} else  {
 					var base = ddocs[key];
 					var path = opts.shift();
-					for(var i in path) {
-						base = base[path[i]];
-					}
+					for(var i in path) { base = base[path[i]]; }
 					if (typeof(base) != 'function') {
 						try {
 							var fn_str = base;
 							base = new CouchAPI();
 							vm.runInNewContext("doIt = "+fn_str, base);
 						} catch(e) {
-//console.error("ERROR="+util.inspect(base)+":"+e);
-							base = { doIt: function() { return e; } };
+							base = { doIt: function() { return e+"=>"+fn_str; } };
 						}
 					} 
 					var style = path[0];
@@ -105,10 +79,15 @@ console.error("ADD_FUN="+fn);
 								return ["resp", resp];
 							},
 							"lists": function(args) {
-								base.resetSend();
-console.error("LISTS:"+util.inspect(base));								
+								SharedCouchAPI = new InitSharedCouchAPI();
+								base.listsArgs = args;
 								base.doIt.apply(base, args);
-								return base.getSend();
+								SharedCouchAPI.sender = []; // reset send output
+								for(var i in SharedCouchAPI.events.head) {
+									SharedCouchAPI.events.head[i]();
+								}
+								SharedCouchAPI.enteredLists = true;
+								return ["start", SharedCouchAPI.sender, SharedCouchAPI.start];
 							},
 							"updates": function(args) {
 								var resp = base.doIt.apply(base,args);
@@ -131,29 +110,40 @@ console.error("LISTS:"+util.inspect(base));
 						 		return (typeof(ret) == 'undefined' && 1) || ret;
 							}
 						};
+						if (SharedCouchAPI && SharedCouchAPI.enteredLists) {
+							return ["error","list_error","not a row '"+style+"'"]
+						}
 						return styler[style].apply(styler, opts);
 					} catch(e) {
-console.error('-ddoc-EXCEPTION:'+util.inspect(e));
-						 return e;
+						return e;
 					}
 				}
 			},
-/*
--ddoc-{ 
-'0': 'foo',
-'1': [ 'shows', 'simple' ],
-'2': [ { title: 'Best ever', body: 'Doc body' }, {} ] }
-*/
 			rereduce: function(func_str, data) {
 				return this.reduce(func_str, data);
 			},
-			list_row: function() {
-console.error('-list_row-');				
-				return null;
+			list_row: function(data) {
+				if (SharedCouchAPI.stop) {
+					return ["error", "unknown_command", "list_row"]
+				}
+				SharedCouchAPI.sender = [];
+				for(var i in SharedCouchAPI.events.row) {
+					SharedCouchAPI.events.row[i](data);
+					if (SharedCouchAPI.stop) {
+						SharedCouchAPI.enteredLists = false;
+						return ["end", SharedCouchAPI.sender];
+					}
+				}
+				return ["chunks", SharedCouchAPI.sender];
 			},
 			list_end: function() {
-console.error('-list_end-');				
-				return null;
+				SharedCouchAPI.sender = [];
+				var ret = [];
+				for(var i in SharedCouchAPI.events.tail) {
+					ret.push(SharedCouchAPI.events.tail[i]());
+				}
+				SharedCouchAPI.enteredLists = false;
+				return ["end", ret];
 			},
 			reduce:  function(fns, data) { 
 				reduce_fn = new CouchAPI();
@@ -173,11 +163,9 @@ console.error('-list_end-');
 				}
 				var func = reduce_fns[fns[0]];
 				if (!func) {
-console.error('REDUCE:'+fns[0]);
 				  vm.runInNewContext("doIt = "+fns[0], reduce_fn);
 					func = reduce_fns[func] = reduce_fn;
 				}
-console.error('-reduce-'+util.inspect(arguments));				
 				return [true, [func.doIt(keys, values)]];
 			},
 			map_doc: function(data) { 
@@ -188,7 +176,6 @@ console.error('-reduce-'+util.inspect(arguments));
 						map_fn.doIts[i](data);
 						ret.push(out_data);
 					}
-console.error('MAP_DOC:'+util.inspect(data)+"=>"+util.inspect(out_data))
 					return ret;
 				} catch(e) {
 					console.error('MAP_DOC:ERROR:'+e);
@@ -196,11 +183,41 @@ console.error('MAP_DOC:'+util.inspect(data)+"=>"+util.inspect(out_data))
 				}
 			}
 		};
-		var out = factory[op.shift()].apply(factory, op);
+		var opt = op.shift();
+		if (SharedCouchAPI && SharedCouchAPI.enteredLists && !(opt in {list_row:0,list_end:0})) {
+			var out = ["error","list_error","not a row '"+opt+"'"]
+		} else {
+			var out = factory[opt].apply(factory, op);
+		}
 		if (out !== null) {
+			var need_exit = false;
+			if (out[0] == "fatal") {
+				out[0] = "error";
+				need_exit = true;
+			}
 			process.stdout.write(JSON.stringify(out)+"\n", 'utf-8');
+			if (need_exit || out[0] == "error" && (out[1] in {fatal:0,unknown_command:1,list_error:2})) {
+				process.exit(1);
+			}
 		}
 	}
 })();
 
-readline(process.stdin, reader);
+
+process.stdin.resume();
+process.stdin.setEncoding('utf-8');
+
+(function(stream, fn) {
+	var queue = [];
+	stream.on('data', function(chunk) {
+		var str = chunk.toString('utf-8');
+		var nl_idx = str.indexOf("\n");
+		if (nl_idx >= 0) {
+			queue.push(str.slice(0,nl_idx));	
+			fn(queue.join(''));			
+			queue = [str.slice(nl_idx+1, str.length)];
+		} else {
+			queue.push(str);	
+		}
+	});
+})(process.stdin, reader);

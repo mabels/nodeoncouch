@@ -1,9 +1,43 @@
-this is the first steps to build a replacment for spidermonkey in couch
-i uses now node for map reduce
+With the first complete relaease today all tests are working. 
+And my real life samples are also working.
+You could run this in every existing couchserver version from 1.0x and up its you
+risk, i will try to fix any problems if you report them.
+If you want to run the test you need my fork of the couchdb source tree until 
+couchbase integrated my work into the mainstream git.
+After a longer discussion with jchris I changed list function from a syncron interface 
+to a async one.
+The old api looks like that:
+function() {
+	send....
+	while(row = getRow()) {
+		send....
+	}
+	send...
+	return "tail";
+}
+the new looks like this. The old API call getRow does not exists anymore. But in 
+the spidermonkey implementation it is still there and is working.
 
-find the couchjs script and paste in mine one and tweak the paths
-than it should work basicly
+function() {
+	on('head', function() { 
+		send ....
+	})
+	on('row', function(row) {
+		send ....
+		stop(obj); // this stops the read of rows 
+	})
+	on('tail', function() {
+		send ....
+		return "trailvalue";
+	})
+}
 
-there will be a better way to deploy but this is done in 10minutes
+To deploy you just need to link the couchjs over the orignal one.
+
+ln -nfs <PATHTOTHISCOUCHJS> couchjs
+
+I will make next a npm module
+
+Have fun!
 
 Meno
