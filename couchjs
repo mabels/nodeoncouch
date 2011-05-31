@@ -43,7 +43,11 @@ var reader = (function() {
   var ddocs = {};
   var state = {};
   return function(line) {
-    var op = JSON.parse(line);
+    try {
+       var op = JSON.parse(line);
+    } catch(e) {
+      return null;
+    }
 //console.error("OP:"+line);
     var factory = {
       reset: function(opts) { 
