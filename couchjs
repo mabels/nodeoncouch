@@ -199,8 +199,10 @@ var reader = (function() {
           }
           return ret;
         } catch(e) {
-          console.error('MAP_DOC:ERROR:'+e);
-          return [[[]]];
+          console.error('MAP_DOC:ERROR:'+e+" with "+data._id);
+          // UGLY.....
+          process.stdout.write(JSON.stringify(["log", e +" with " + data._id])+"\n", 'utf-8');
+          return [[], [[data._id, null]]];
         }
       }
     };
