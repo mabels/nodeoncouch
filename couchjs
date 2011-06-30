@@ -19,8 +19,8 @@ var reader = (function() {
 
   var CouchAPI = function() { }
   CouchAPI.prototype = {
-      log: function(str) { return(["log", util.inspect(str)]); },
-      sum: function(arr) { this.log(util.inspect(arguments)); var ret=0; for(var i in arr) { ret += arr[i] }; return ret; },
+      log: function(str) { process.stdout.write(JSON.stringify(["log", util.inspect(str)])+"\n", 'utf-8'); },
+      sum: function(arr) { var ret=0; for(var i in arr) { ret += arr[i] }; return ret; },
       isArray: Array.isArray,
       start: function(obj) { SharedCouchAPI.start = obj },
       stop: function(obj) { SharedCouchAPI.stop = true; SharedCouchAPI.sender.push(obj); },
@@ -32,6 +32,7 @@ var reader = (function() {
   }
 
   var map_fn = {
+                  require: require,
                   log: CouchAPI.prototype.log,
                   isArray: Array.isArray,
                   doIts: [],
